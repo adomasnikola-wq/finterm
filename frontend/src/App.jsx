@@ -37,17 +37,35 @@ function simpleRisk(pct,rsi){const a=Math.abs(Number(pct||0));let r=0;if(a>5)r++
 // ── FETCH DATI ─────────────────────────────────────────────────────────────
 async function fetchMarketData(sym, type) {
   if (type === "crypto") {
-    const id = CRYPTO_IDS[sym.toUpperCase()] || sym.toLowerCase();
-    const r = await fetch(`/api/crypto/${id}`);
+    const r = await fetch(`/api/crypto/${sym.toUpperCase()}`);
     if (!r.ok) throw new Error(`Crypto "${sym}" non trovata`);
-    const { mkt, hist } = await r.json();
-    const coin = mkt[0];
+    const json = await r.json();
+    if (json.error) throw new Error(json.error);
+    const coin = json.mkt[0];
     if (!coin) throw new Error(`Nessun dato per "${sym}"`);
-    const priceHistory = (hist.prices || []).map(([ts, price], i) => ({
-      date: new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-      price,
-      volume: hist.total_volumes?.[i]?.[1] ?? 0,
-    }));
+    const priceHistory = Array.isArray(json.priceHistory) && json.priceHistory.length > 0
+      ? json.priceHistory
+      : (json.hist?.prices || []).map(([ts, price]) => ({
+          date: new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          price,
+          volume: 0,
+        }));
+    return {
+      symbol: coin.symbol?.toUpperCase() || sym,
+      name: coin.name, type,
+      price: coin.current_price,
+      change24h: coin.price_change_24h,
+      changePct24h: coin.price_change_percentage_24h,
+      high24h: coin.high_24h,
+      low24h: coin.low_24h,
+      volume24h: coin.total_volume,
+      marketCap: coin.market_cap,
+      rank: coin.market_cap_rank,
+      ath: coin.ath,
+      athChangePct: coin.ath_change_percentage,
+      supply: coin.circulating_supply,
+      priceHistory,
+    };
     return {
       symbol: coin.symbol.toUpperCase(), name: coin.name, type,
       price: coin.current_price, change24h: coin.price_change_24h,
