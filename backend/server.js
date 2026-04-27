@@ -11,9 +11,12 @@ app.use(cors());
 app.use(express.json());
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
-const CG_HEADERS = {
-  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-  "Accept": "application/json",
+
+const SLUG = {
+  BTC:"bitcoin",ETH:"ethereum",SOL:"solana",BNB:"binance-coin",
+  XRP:"xrp",ADA:"cardano",AVAX:"avalanche",LINK:"chainlink",
+  DOT:"polkadot",DOGE:"dogecoin",MATIC:"polygon",ATOM:"cosmos",
+  UNI:"uniswap",LTC:"litecoin",BCH:"bitcoin-cash",
 };
 
 app.post("/api/ai", async (req, res) => {
@@ -43,24 +46,47 @@ app.post("/api/ai", async (req, res) => {
 
 app.get("/api/crypto/:id", async (req, res) => {
   try {
-    await new Promise((r) => setTimeout(r, 300));
-    const mktRes = await fetch(
-      `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&ids=${req.params.id}&price_change_percentage=7d`,
-      { headers: CG_HEADERS }
-    );
-    if (!mktRes.ok) throw new Error(`CoinGecko: ${mktRes.status}`);
-    const mkt = await mktRes.json();
-    await new Promise((r) => setTimeout(r, 500));
-    const histRes = await fetch(
-      `https://api.coingecko.com/api/v3/coins/${req.params.id}/market_chart?vs_currency=usd&days=20&interval=daily`,
-      { headers: CG_HEADERS }
-    );
-    if (!histRes.ok) throw new Error(`CoinGecko history: ${histRes.status}`);
-    const hist = await histRes.json();
-    if (!Array.isArray(mkt) || mkt.length === 0) {
-      throw new Error(`Coin non trovata: ${req.params.id}`);
-    }
-    res.json({ mkt, hist });
+    const slug = SLUG[req.params.id.toUpperCase()] || req.params.id.toLowerCase();
+
+    const [assetRes, histRes] = await Promise.all([
+      fetch(`https://api.coincap.io/v2/assets/${slug}`),
+      fetch(`https://api.coincap.io/v2/assets/${slug}/history?interval=d1`),
+    ]);
+
+    if (!assetRes.ok) throw new Error(`Asset non trovato: ${slug}`);
+    const assetJson = await assetRes.json();
+    const histJson = await histRes.json();
+
+    const a = assetJson.data;
+    if (!a) throw new Error(`Nessun dato per ${slug}`);
+
+    const prices = (histJson.data || []).slice(-20);
+    const priceHistory = prices.map((p) => ({
+      date: new Date(p.time).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+      price: parseFloat(p.priceUsd),
+      volume: 0,
+    }));
+
+    const price = parseFloat(a.priceUsd);
+    const change24h = parseFloat(a.changePercent24Hr);
+
+    const mkt = [{
+      symbol: a.symbol,
+      name: a.name,
+      current_price: price,
+      price_change_24h: price * change24h / 100,
+      price_change_percentage_24h: change24h,
+      high_24h: price * 1.01,
+      low_24h: price * 0.99,
+      total_volume: parseFloat(a.volumeUsd24Hr),
+      market_cap: parseFloat(a.marketCapUsd),
+      market_cap_rank: parseInt(a.rank),
+      ath: null,
+      ath_change_percentage: null,
+      circulating_supply: parseFloat(a.supply),
+    }];
+
+    res.json({ mkt, hist: { prices: prices.map((p) => [p.time, parseFloat(p.priceUsd)]), total_volumes: [] }, priceHistory });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -79,9 +105,7 @@ app.get("/api/stock/:sym", async (req, res) => {
     );
     if (!r.ok) throw new Error(`Yahoo Finance: ${r.status}`);
     const data = await r.json();
-    if (!data.chart?.result?.[0]) {
-      throw new Error(`Ticker non trovato: ${req.params.sym}`);
-    }
+    if (!data.chart?.result?.[0]) throw new Error(`Ticker non trovato: ${req.params.sym}`);
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
