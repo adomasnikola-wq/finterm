@@ -52,9 +52,11 @@ priceHistory must have exactly 20 real entries. No zeros for main fields.`
     const m = text.match(/\{[\s\S]*\}/);
     if (!m) throw new Error("JSON non trovato");
     res.json(JSON.parse(m[0]));
-  } catch (e) {
+ } catch (e) {
+    console.error("MARKET ERROR:", e.message);
     res.status(500).json({ error: e.message });
   }
+});
 });
 
 // ── Analisi AI via Gemini ──────────────────────────────────────────────────
