@@ -12,38 +12,22 @@ app.use(express.json());
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 
 async function askGemini(prompt) {
-  const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        tools: [{ google_search: {} }],
-      }),
-    }
-  );
+  const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({contents:[{parts:[{text:prompt}]}],tools:[{google_search:{}}]})});
   const data = await r.json();
   if (data.error) throw new Error(data.error.message);
-  return data?.candidates?.[0]?.content?.parts
-    ?.filter((p) => p.text)
-    .map((p) => p.text)
-    .join("") || "";
+  return data?.candidates?.[0]?.content?.parts?.filter(p=>p.text).map(p=>p.text).join("") || "";
 }
 
 app.post("/api/market", async (req, res) => {
-  const { sym, type } = req.body;
   try {
-    const date = new Date().toLocaleDateString("en-US", {
-      month: "long", day: "numeric", year: "numeric"
-    });
-    const prompt = `Today is ${date}. Search the web for REAL current market data for ${sym} (${type}). Return ONLY valid JSON, no markdown, no backticks: {"symbol":"${sym}","name":"Full Name","type":"${type}","price":0,"change24h":0,"changePct24h":0,"high24h":0,"low24h":0,"volume24h":0,"marketCap":0,"rank":null,"ath":null,"athChangePct":null,"supply":null,"pe":null,"fiftyTwoHigh":null,"fiftyTwoLow":null,"exchange":null,"priceHistory":[{"date":"Apr 1","price":0,"volume":0}]} Search TWICE: 1) current price and metrics 2) last 20 daily closing prices. priceHistory must have exactly 20 real entries. No zeros for main fields.`;
+    const { sym, type } = req.body;
+    const date = new Date().toLocaleDateString("en-US",{month:"long",day:"numeric",year:"numeric"});
+    const prompt = `Today is ${date}. Search web for REAL current data for ${sym} (${type}). Return ONLY valid JSON no markdown: {"symbol":"${sym}","name":"Full Name","type":"${type}","price":0,"change24h":0,"changePct24h":0,"high24h":0,"low24h":0,"volume24h":0,"marketCap":0,"rank":null,"ath":null,"athChangePct":null,"supply":null,"pe":null,"fiftyTwoHigh":null,"fiftyTwoLow":null,"exchange":null,"priceHistory":[{"date":"Apr 1","price":0,"volume":0}]} Do TWO searches: 1) current price+metrics 2) last 20 daily closing prices. priceHistory: 20 real entries no zeros.`;
     const text = await askGemini(prompt);
     const m = text.match(/\{[\s\S]*\}/);
-    if (!m) throw new Error("JSON non trovato nella risposta");
-    const json = JSON.parse(m[0]);
-    res.json(json);
-  } catch (e) {
+    if (!m) throw new Error("JSON non trovato");
+    res.json(JSON.parse(m[0]));
+  } catch(e) {
     console.error("MARKET ERROR:", e.message);
     res.status(500).json({ error: e.message });
   }
@@ -53,7 +37,7 @@ app.post("/api/ai", async (req, res) => {
   try {
     const text = await askGemini(req.body.prompt);
     res.json({ text });
-  } catch (e) {
+  } catch(e) {
     console.error("AI ERROR:", e.message);
     res.status(500).json({ error: e.message });
   }
