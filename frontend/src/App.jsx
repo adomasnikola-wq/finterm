@@ -5,11 +5,6 @@ import {
 } from "recharts";
 
 const CACHE_TTL = 5 * 60 * 1000;
-const CRYPTO_IDS = {
-  BTC:"bitcoin",ETH:"ethereum",SOL:"solana",BNB:"binancecoin",XRP:"ripple",
-  ADA:"cardano",AVAX:"avalanche-2",LINK:"chainlink",DOT:"polkadot",
-  DOGE:"dogecoin",MATIC:"matic-network",ATOM:"cosmos",UNI:"uniswap",
-};
 const QUICK = {
   equity:["AAPL","MSFT","NVDA","TSLA","GOOGL","AMZN","META","JPM","AMD"],
   etf:["SPY","QQQ","IWM","GLD","TLT","VTI","SOXX","ARKK","CQQQ"],
@@ -34,97 +29,40 @@ function calcSignal(data,rsi,abv20,abv7){if(!data)return null;let sc=0;const p=N
   return{label:"BEARISH",it:"Momento negativo 📉",color:"#ff4057",bg:"rgba(255,64,87,.08)",border:"#ff4057",dot:"#ff4057"};}
 function simpleRisk(pct,rsi){const a=Math.abs(Number(pct||0));let r=0;if(a>5)r++;if(a>10)r++;if(rsi!=null&&(rsi>75||rsi<25))r++;if(r>=2)return{label:"Alto ⚠️",color:"#ff4057"};if(r===1)return{label:"Medio 🟡",color:"#ffb300"};return{label:"Basso ✅",color:"#00e676"};}
 
-// ── FETCH DATI ─────────────────────────────────────────────────────────────
 async function fetchMarketData(sym, type) {
-  if (type === "crypto") {
-    const r = await fetch(`/api/crypto/${sym.toUpperCase()}`);
-    if (!r.ok) throw new Error(`Crypto "${sym}" non trovata`);
-    const json = await r.json();
-    if (json.error) throw new Error(json.error);
-    const coin = json.mkt[0];
-    if (!coin) throw new Error(`Nessun dato per "${sym}"`);
-    const priceHistory = Array.isArray(json.priceHistory) && json.priceHistory.length > 0
-      ? json.priceHistory
-      : (json.hist?.prices || []).map(([ts, price]) => ({
-          date: new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-          price,
-          volume: 0,
-        }));
-    return {
-      symbol: coin.symbol?.toUpperCase() || sym,
-      name: coin.name, type,
-      price: coin.current_price,
-      change24h: coin.price_change_24h,
-      changePct24h: coin.price_change_percentage_24h,
-      high24h: coin.high_24h,
-      low24h: coin.low_24h,
-      volume24h: coin.total_volume,
-      marketCap: coin.market_cap,
-      rank: coin.market_cap_rank,
-      ath: coin.ath,
-      athChangePct: coin.ath_change_percentage,
-      supply: coin.circulating_supply,
-      priceHistory,
-    };
-    return {
-      symbol: coin.symbol.toUpperCase(), name: coin.name, type,
-      price: coin.current_price, change24h: coin.price_change_24h,
-      changePct24h: coin.price_change_percentage_24h,
-      high24h: coin.high_24h, low24h: coin.low_24h,
-      volume24h: coin.total_volume, marketCap: coin.market_cap,
-      rank: coin.market_cap_rank, ath: coin.ath,
-      athChangePct: coin.ath_change_percentage,
-      supply: coin.circulating_supply, priceHistory,
-    };
-  } else {
-    const r = await fetch(`/api/stock/${sym}`);
-    if (!r.ok) throw new Error(`Ticker "${sym}" non trovato`);
-    const json = await r.json();
-    const result = json.chart?.result?.[0];
-    if (!result) throw new Error(`Nessun dato per "${sym}"`);
-    const { meta, timestamp, indicators } = result;
-    const q = indicators.quote[0];
-    const priceHistory = timestamp.map((ts, i) => ({
-      date: new Date(ts * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-      price: q.close[i], volume: q.volume[i],
-    })).filter(d => d.price != null);
-    const cur = meta.regularMarketPrice, prev = meta.previousClose;
-    return {
-      symbol: meta.symbol, name: meta.longName || meta.shortName || meta.symbol, type,
-      price: cur, change24h: cur - prev, changePct24h: ((cur - prev) / prev) * 100,
-      high24h: meta.regularMarketDayHigh, low24h: meta.regularMarketDayLow,
-      volume24h: meta.regularMarketVolume, marketCap: meta.marketCap,
-      pe: meta.forwardPE, exchange: meta.exchangeName,
-      fiftyTwoHigh: meta.fiftyTwoWeekHigh, fiftyTwoLow: meta.fiftyTwoWeekLow,
-      priceHistory,
-    };
-  }
+  const r = await fetch("/api/market", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sym, type }),
+  });
+  if (!r.ok) throw new Error(`Errore server ${r.status}`);
+  const json = await r.json();
+  if (json.error) throw new Error(json.error);
+  if (!json.price) throw new Error(`Nessun dato ricevuto per ${sym}`);
+  return json;
 }
 
 async function runAIAnalysis(sym, data, mode, onChunk, onStatus) {
   const isSimple = mode === "simple";
-  const date = new Date().toLocaleDateString("it-IT", { day: "numeric", month: "long", year: "numeric" });
+  const date = new Date().toLocaleDateString("it-IT", { day:"numeric", month:"long", year:"numeric" });
   const prompt = isSimple
-    ? `Oggi è ${date}. Sei un consulente finanziario che spiega a NON esperti.\nASSET: ${data.name} (${sym})\nPrezzo: $${fmt.price(data.price)} (${fmt.pct(data.changePct24h)} oggi)\nMCap: ${fmt.large(data.marketCap)}\n${data.rank ? `Rank: #${data.rank}` : ""}\nFai una ricerca web su notizie recenti, poi scrivi in ITALIANO semplice:\n[SINTESI]\n2-3 frasi chiare: cosa sta succedendo e perché è importante.\n[/SINTESI]\n[NOTIZIE]\n• notizia 1 spiegata semplicemente\n• notizia 2\n• notizia 3\n[/NOTIZIE]\n[COSA FARE]\n2-3 frasi pratiche per un principiante. No consigli finanziari diretti.\n[/COSA FARE]`
-    : `Oggi è ${date}. Sei un analista quantitativo senior.\nASSET: ${data.name} (${sym})\nPrezzo: $${fmt.price(data.price)} (${fmt.pct(data.changePct24h)})\nVolume: ${fmt.large(data.volume24h)} | MCap: ${fmt.large(data.marketCap)}\n${data.rank ? `CMC: #${data.rank}` : ""}${data.pe ? ` | P/E: ${data.pe}x` : ""}\n${data.ath ? `ATH: $${fmt.price(data.ath)} (${fmt.pct(data.athChangePct)})` : ""}\nFai ricerca web, poi in ITALIANO:\n▸ TREND TECNICO\n[1 frase]\n▸ SUPPORTI / RESISTENZE\nS1: $X | S2: $X\nR1: $X | R2: $X\n▸ CATALYST RECENTI\n• news1\n• news2\n• news3\n▸ TARGET 30gg\nBull: $X | Base: $X | Bear: $X\n▸ RISK/REWARD\nScore: X/10 — motivazione\n▸ SENTIMENT\nEmoji X/10 — frase\n▸ OPERATIVITÀ\n[LONG/SHORT/NEUTRALE — entry, stop, target]`;
-
+    ? `Oggi è ${date}. Sei un consulente finanziario che spiega a NON esperti.\nASSET: ${data.name} (${sym})\nPrezzo: $${fmt.price(data.price)} (${fmt.pct(data.changePct24h)} oggi)\nMCap: ${fmt.large(data.marketCap)}\n${data.rank?`Rank: #${data.rank}`:""}\nFai una ricerca web su notizie recenti, poi scrivi in ITALIANO semplice:\n[SINTESI]\n2-3 frasi chiare: cosa sta succedendo e perché è importante.\n[/SINTESI]\n[NOTIZIE]\n• notizia 1 spiegata semplicemente\n• notizia 2\n• notizia 3\n[/NOTIZIE]\n[COSA FARE]\n2-3 frasi pratiche per un principiante. No consigli finanziari diretti.\n[/COSA FARE]`
+    : `Oggi è ${date}. Sei un analista quantitativo senior.\nASSET: ${data.name} (${sym})\nPrezzo: $${fmt.price(data.price)} (${fmt.pct(data.changePct24h)})\nVolume: ${fmt.large(data.volume24h)} | MCap: ${fmt.large(data.marketCap)}\n${data.rank?`CMC: #${data.rank}`:""}${data.pe?` | P/E: ${data.pe}x`:""}\n${data.ath?`ATH: $${fmt.price(data.ath)} (${fmt.pct(data.athChangePct)})`:""}\nFai ricerca web, poi in ITALIANO:\n▸ TREND TECNICO\n[1 frase]\n▸ SUPPORTI / RESISTENZE\nS1: $X | S2: $X\nR1: $X | R2: $X\n▸ CATALYST RECENTI\n• news1\n• news2\n• news3\n▸ TARGET 30gg\nBull: $X | Base: $X | Bear: $X\n▸ RISK/REWARD\nScore: X/10 — motivazione\n▸ SENTIMENT\nEmoji X/10 — frase\n▸ OPERATIVITÀ\n[LONG/SHORT/NEUTRALE — entry, stop, target]`;
   onStatus("Ricerca web in corso...");
   const r = await fetch("/api/ai", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
+    method:"POST", headers:{"Content-Type":"application/json"},
     body: JSON.stringify({ prompt }),
   });
-  if (!r.ok) throw new Error(`AI API ${r.status}`);
+  if (!r.ok) throw new Error(`AI ${r.status}`);
   onStatus("Analisi in corso...");
   const json = await r.json();
   if (json.error) throw new Error(json.error);
   onChunk(json.text || "Nessuna risposta.");
 }
 
-// ── COMPONENTI ─────────────────────────────────────────────────────────────
-const ChartTip = ({ active, payload, label, type }) => {
-  if (!active || !payload?.length) return null;
-  return (<div style={{background:"#0c1525",border:"1px solid #1e3350",padding:"8px 10px",fontFamily:"JetBrains Mono",fontSize:"9px",color:"#ccd8e8"}}><div style={{color:"#3a4e62",marginBottom:3}}>{label}</div>{payload.map((p,i)=>p.value!=null&&(<div key={i} style={{color:p.color,display:"flex",gap:8}}><span style={{color:"#7a90a8"}}>{String(p.name).toUpperCase()}</span><span>{type==="vol"?fmt.large(p.value):type==="rsi"?Number(p.value).toFixed(1):`$${fmt.price(p.value)}`}</span></div>))}</div>);
+const ChartTip = ({active,payload,label,type}) => {
+  if(!active||!payload?.length)return null;
+  return(<div style={{background:"#0c1525",border:"1px solid #1e3350",padding:"8px 10px",fontFamily:"JetBrains Mono",fontSize:"9px",color:"#ccd8e8"}}><div style={{color:"#3a4e62",marginBottom:3}}>{label}</div>{payload.map((p,i)=>p.value!=null&&(<div key={i} style={{color:p.color,display:"flex",gap:8}}><span style={{color:"#7a90a8"}}>{String(p.name).toUpperCase()}</span><span>{type==="vol"?fmt.large(p.value):type==="rsi"?Number(p.value).toFixed(1):`$${fmt.price(p.value)}`}</span></div>))}</div>);
 };
 function IndBadge({label,value,valClass,help,onHover}){return(<div style={{display:"flex",gap:6,padding:"3px 10px",background:"#0c1525",fontSize:9,cursor:"help",position:"relative"}} onMouseEnter={()=>onHover(help)} onMouseLeave={()=>onHover(null)}><span style={{color:"#3a4e62"}}>{label}</span><span style={{color:valClass==="g"?"#00e676":valClass==="r"?"#ff4057":valClass==="a"?"#ffb300":"#7a90a8"}}>{value}</span><span style={{color:"#1e3350",fontSize:8}}>ⓘ</span></div>);}
 function Semaphore({signal,simple}){if(!signal)return null;return(<div style={{display:"flex",alignItems:"center",gap:10,padding:simple?"12px 16px":"6px 12px",border:`1px solid ${signal.border}`,background:signal.bg,borderRadius:2,marginBottom:simple?12:0}}><div style={{width:simple?16:10,height:simple?16:10,borderRadius:"50%",background:signal.dot,flexShrink:0}}/><div><div style={{fontSize:simple?13:9,fontWeight:700,color:signal.color,letterSpacing:simple?1:2}}>{simple?signal.it:signal.label}</div>{simple&&<div style={{fontSize:10,color:"#7a90a8",marginTop:2}}>Segnale tecnico aggregato</div>}</div></div>);}
@@ -133,7 +71,7 @@ function SimpleCard({label,value,color,explain}){return(<div style={{background:
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Barlow:wght@700;900&display=swap');
 *{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#04080f;--bg2:#070d18;--bg3:#0c1525;--green:#00e676;--red:#ff4057;--amber:#ffb300;--blue:#4fc3f7;--purple:#ce93d8;--t1:#ccd8e8;--t2:#7a90a8;--t3:#3a4e62;--br:#152030;--br2:#1e3350}
+:root{--bg:#04080f;--bg2:#070d18;--bg3:#0c1525;--green:#00e676;--red:#ff4057;--amber:#ffb300;--blue:#4fc3f7;--t1:#ccd8e8;--t2:#7a90a8;--t3:#3a4e62;--br:#152030;--br2:#1e3350}
 body{background:var(--bg);font-family:'JetBrains Mono',monospace;color:var(--t1)}
 .app{min-height:100vh;display:flex;flex-direction:column}
 .scanline{position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 3px,rgba(0,0,0,.06) 3px,rgba(0,0,0,.06) 4px);pointer-events:none;z-index:9999}
@@ -238,7 +176,7 @@ export default function FinTerm() {
     setAnalysis("");setSintesi("");setAiPhase("idle");setAiStatus("");
     const ck=`${sym}_${at}`,cached=cacheRef.current.get(ck);
     if(cached&&Date.now()-cached.ts<CACHE_TTL){setMktData(cached.d);setChart(cached.c||[]);setPhase("done");return;}
-    setLoadMsg(`CARICAMENTO DATI ${sym}...`);
+    setLoadMsg(`GEMINI CERCA DATI ${sym}...`);
     try{
       const d=await fetchMarketData(sym,at);
       const h=Array.isArray(d.priceHistory)?d.priceHistory:[];
@@ -310,7 +248,7 @@ export default function FinTerm() {
         {QUICK[tab].map(s=><button key={s} className="qp" onClick={()=>pick(s)}>{s}</button>)}
       </div>
 
-      {phase==="loading"&&<div className="center"><div className="pulse" style={{fontSize:11,color:"#3a4e62",letterSpacing:"2px"}}>{loadMsg}<span className="blink"> ▋</span></div><div className="lbar"><div className="lbar-i"/></div><div style={{fontSize:9,color:"#152030",letterSpacing:"1.5px",textAlign:"center"}}>GEMINI AI · WEB SEARCH<br/>Recupero dati in corso...</div></div>}
+      {phase==="loading"&&<div className="center"><div className="pulse" style={{fontSize:11,color:"#3a4e62",letterSpacing:"2px"}}>{loadMsg}<span className="blink"> ▋</span></div><div className="lbar"><div className="lbar-i"/></div><div style={{fontSize:9,color:"#152030",letterSpacing:"1.5px",textAlign:"center"}}>GEMINI AI · WEB SEARCH<br/>Recupero dati in corso (~15s)...</div></div>}
       {phase==="error"&&<div className="errmsg">✕ {err}<br/><span style={{color:"#3a4e62",fontSize:9}}>Riprova con ⟳</span></div>}
       {phase==="idle"&&<div className="center"><div style={{fontSize:13,color:"#1e3350",letterSpacing:3}}>FINTERM v3.0</div><div style={{fontSize:9,color:"#152030",letterSpacing:"1.5px",textAlign:"center",lineHeight:1.9}}>Cerca un ticker o usa i quick pick<br/><span style={{color:"#3a4e62"}}>{mode==="simple"?"Modalità Simple: linguaggio chiaro":"Modalità Pro: analisi tecnica"}</span></div></div>}
 
@@ -347,7 +285,7 @@ export default function FinTerm() {
             </div>
           </div>
           <div className="sright">
-            <div className="ptitle">ANALISI AI — GEMINI + WEB SEARCH</div>
+            <div className="ptitle">ANALISI AI — GEMINI + WEB</div>
             {sintesi&&<div className="sintesi"><div className="sintesi-label">In sintesi</div>{sintesi}</div>}
             <button className="abtn" onClick={doAnalysis} disabled={aiPhase==="active"}>{aiPhase==="active"?<><span className="pulse" style={{display:"inline-block"}}>⟳</span> {aiStatus||"Analisi..."}</>:aiPhase==="done"?"Aggiorna analisi":"Spiega cosa sta succedendo"}</button>
             {aiPhase==="active"&&aiStatus&&<div className="status-tag"><span className="pulse">{aiStatus}</span></div>}
